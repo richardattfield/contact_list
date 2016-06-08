@@ -15,9 +15,9 @@ ARGV
 
 class Contact
 
-  attr_accessor :name, :email, :contact, :all_contacts; :id
+  attr_accessor :name, :email, :contact, :all_contacts, :id
   def self.conn
-      PG.connect(
+    PG.connect(
       host: 'localhost',
       dbname: 'contacts_db',
       user: 'development',
@@ -32,6 +32,7 @@ class Contact
     @name = name
     @email = email
   end
+
   def save
     db_connection = Contact.conn
     if !@id
@@ -93,8 +94,8 @@ class Contact
     def search(term)
       db_connection = Contact.conn
       db_connection.exec("SELECT * FROM contacts WHERE name LIKE '#{term}%';")
-
     end
+
     def add_contact
       puts "Please enter first and last name:"
       full_name = STDIN.gets.chomp

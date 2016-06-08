@@ -1,97 +1,125 @@
 require 'csv'
 require 'pry-byebug'
+require 'pg'
 def menu
   puts "Here is a list of available parameters:"
   puts "new    - Create a new contact"
   puts "list   - List all contacts"
   puts "show   - Show a contact"
   puts "search - Search contacts"
+  puts "delete - Delete a contact"
 end
 
 menu if ARGV.empty?
 ARGV
-# binding.pry
-# Represents a person in an address book.
-# The ContactList class will work with Contact objects instead of interacting with the CSV file directly
 
 class Contact
 
-  attr_accessor :name, :email, :contact, :all_contacts
-
+  attr_accessor :name, :email, :contact, :all_contacts; :id
+  def self.conn
+      PG.connect(
+      host: 'localhost',
+      dbname: 'contacts_db',
+      user: 'development',
+      password: 'development'
+    )
+  end
   # Creates a new contact object
   # @param name [String] The contact's name
   # @param email [String] The contact's email address
-  def initialize(name, email)
-    # TODO: Assign parameter values to instance variables.
+  def initialize(id=nil, name=nil, email=nil)
+    @id = id
     @name = name
     @email = email
-
+  end
+  def save
+    db_connection = Contact.conn
+    if !@id
+      result = db_connection.exec('INSERT INTO contacts (name, email) VALUES ($1, $2) RETURNING id;', [@name, @email])
+      @id = result.first['id'].to_i
+    else
+      db_connection.exec('UPDATE contacts SET name = $1, email = $2 WHERE id = $3;', [@name, @email, @id.to_i])
+    end
+    return self
   end
 
-  # Provides functionality for managing contacts in the csv file.
-  class << self
+  def update #called by find or search
+    @id = ARGV[1]
+    contact_to_update = Contact.find(@id)
+    puts "Enter new name:"
+    @name = STDIN.gets.chomp
+    puts "Enter new email:"
+    @email = STDIN.gets.chomp
+    save
+    return self
+  end
 
-    # Opens 'contacts.csv' and creates a Contact object for each line in the file (aka each contact).
+  def destroy
+    @id = ARGV[1]
+    contact_to_destroy = Contact.find(@id)
+    return if contact_to_destroy.nil?
+    puts "Deleting contact: #{contact_to_destroy.name}"
+    Contact.conn.exec('DELETE FROM contacts WHERE id = $1;', [@id.to_i])
+    return self
+  end
+
+  # Provides functionality for managing contacts in the database file.
+  class << self
+    # Opens
     # @return [Array<Contact>] Array of Contact objects
     def all
-      # TODO: Return an Array of Contact instances made from the data in 'contacts.csv'.
-      contacts = CSV.read('contacts.csv')
-      contacts_instances = []
-      id = 0
-      contacts.each do |contact|
-        id += 1
-          contacts_instances << [id,Contact.new(contact[1], contact[2])]
-      end
-      return contacts_instances
+      db_connection = Contact.conn
+      db_connection.exec('SELECT * FROM contacts ORDER BY id;')
     end
 
-    # Creates a new contact, adding it to the csv file, returning the new contact.
     # @param name [String] the new contact's name
     # @param email [String] the contact's email
     def create(name, email)
-      # TODO: Instantiate a Contact, add its data to the 'contacts.csv' file, and return it.
-      contact_instance = Contact.new(name,email)
-      all_contacts = CSV.read('contacts.csv') #array of arrays
-      id = 0
-      begin
-      all_contacts.each do |contact|
-        raise "DuplicateEmailError" if contact[2] == email
-      end
-
-        id += 1
-        contact[0] = id
-      end
-      all_contacts << [id+1,contact_instance.name,contact_instance.email]
-      CSV.open('contacts.csv','w') do |old_contacts|
-        all_contacts.each do |new_contacts|
-          old_contacts << new_contacts
-        end
-      end
-      return contact_instance
+      Contact.new(@id,name,email).save
     end
 
-    # Find the Contact in the 'contacts.csv' file with the matching id.
+    # Find the Contact in the 'contacts db' file with the matching id.
     # @param id [Integer] the contact id
     # @return [Contact, nil] the contact with the specified id. If no contact has the id, returns nil.
     def find(id)
-      # TODO: Find the Contact in the 'contacts.csv' file with the matching id.
-      # contact_instances = self.all
-      contact_instances = all
-      contact_instances.find do |contact_instance|
-        contact_instance[0] == id
-      end
-
+      db_connection = Contact.conn
+      obj = db_connection.exec('SELECT * FROM CONTACTS WHERE id=$1::int;',[id])
+      Contact.new(obj.first["id"],obj.first["name"],obj.first["email"]) unless obj.first.nil?
     end
 
     # Search for contacts by either name or email.
     # @param term [String] the name fragment or email fragment to search for
     # @return [Array<Contact>] Array of Contact objects.
     def search(term)
-      # TODO: Select the Contact instances from the 'contacts.csv' file whose name or email attributes contain the search term.
-      # contact_instances = self.all
-      contact_instances = all
-      contact_instances.select do |contact_instance|
-        (contact_instance[1].name.match(/#{term}/) || contact_instance[1].email.match(/#{term}/))
+      db_connection = Contact.conn
+      db_connection.exec("SELECT * FROM contacts WHERE name LIKE '#{term}%';")
+
+    end
+    def add_contact
+      puts "Please enter first and last name:"
+      full_name = STDIN.gets.chomp
+      puts "Please enter e-mail address:"
+      email = STDIN.gets.chomp
+      new_contact = Contact.create(full_name, email)
+      puts "New contact successfully created!"
+      print_output(new_contact)
+    end
+
+    def print_output(contacts, show = false)
+      input_type = contacts.class
+      puts "***Contact not found!***" if input_type.to_s == "NilClass"
+      case input_type.to_s
+      when "Contact"
+        message = "Contact found" if show
+        message = "Contact added, removed, or updated" unless show
+        puts "---------"
+        puts "#{message}: #{contacts.name}   #{contacts.email}"
+        puts "---------"
+      when "PG::Result"
+        contacts.each do |contact|
+          puts "#{contact["id"]} #{contact["name"]}, #{contact["email"]}"
+        end
+        puts "***No results!***" if contacts.first.nil?
       end
     end
   end
@@ -99,40 +127,22 @@ end
 
 case ARGV[0]
 when "new"
-  puts "Please enter first and last name:"
-  full_name = STDIN.gets.chomp
-  puts "Please enter e-mail address:"
-  email = STDIN.gets.chomp
-  new_contact = Contact.create(full_name, email)
-  puts "New contact successfully created!"
-  puts "#{new_contact.name}, #{new_contact.email}"
+  Contact.add_contact
 when "list"
-  id = 0
   contacts_instances = Contact.all
   puts "Your contacts are:"
-  contacts_instances.each do |contact_instance|
-    puts "#{contact_instance[0]}: #{contact_instance[1].name}, (#{contact_instance[1].email})"
-    id = contact_instance[0]
-  end
-  puts "---"
-  puts "#{id} records total"
+  Contact.print_output(contacts_instances)
+  puts "---------"
 when "show"
   contact_to_show = Contact.find(ARGV[1].to_i)
-  if contact_to_show != nil
-    puts "#{contact_to_show[1].name}"
-    puts "#{contact_to_show[1].email}"
-  else
-    puts "Contact not found"
-  end
+  Contact.print_output(contact_to_show, true)
 when "search"
-  contacts_instances = Contact.search(ARGV[1])
-  if contacts_instances[0] != nil
-    contacts_instances.each do |contact_instance|
-      puts "#{contact_instance[0]}: #{contact_instance[1].name}, (#{contact_instance[1].email})"
-      id = contact_instance[0]
-    end
-  else
-    puts "Contact not found"
-  end
+  contacts_to_show = Contact.search(ARGV[1])
+  Contact.print_output(contacts_to_show)
+when "update"
+  result = Contact.new.update
+  Contact.print_output(result)
+when "delete"
+  result = Contact.new.destroy
+  Contact.print_output(result)
 end
-# p ARGV[0] #driver - remove at end
